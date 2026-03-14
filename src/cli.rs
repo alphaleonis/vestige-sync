@@ -48,10 +48,10 @@ pub struct Args {
     #[arg(long)]
     pub export_on_exit: bool,
 
-    /// Custom data directory for vestige. Forwarded to both vestige-mcp
-    /// (--data-dir) and the vestige CLI (--data-dir).
+    /// Path to the vestige database file. Forwarded to both vestige-mcp
+    /// and the vestige CLI as --data-dir.
     #[arg(long)]
-    pub data_dir: Option<PathBuf>,
+    pub db_path: Option<PathBuf>,
 
     /// Import all other machines' export files before starting vestige-mcp.
     #[arg(long)]
@@ -74,7 +74,7 @@ impl Args {
     /// Expand `~` in all path arguments to the user's home directory.
     pub fn resolve_paths(&mut self) {
         self.sync_dir = expand_tilde(&self.sync_dir);
-        self.data_dir = self.data_dir.as_deref().map(expand_tilde);
+        self.db_path = self.db_path.as_deref().map(expand_tilde);
         self.vestige_bin = expand_tilde(&self.vestige_bin);
         self.vestige_cli = expand_tilde(&self.vestige_cli);
     }

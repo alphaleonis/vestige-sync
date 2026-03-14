@@ -28,11 +28,11 @@ async fn wait_for_signal() {
 
 /// Spawn vestige-mcp as a child process, relay stdio, and handle signals.
 pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
-    // Build vestige-mcp arguments, prepending --data-dir if specified
+    // Build vestige-mcp arguments, prepending --data-dir if --db-path was specified
     let mut mcp_args: Vec<String> = Vec::new();
-    if let Some(ref data_dir) = args.data_dir {
+    if let Some(ref db_path) = args.db_path {
         mcp_args.push("--data-dir".to_string());
-        mcp_args.push(data_dir.to_string_lossy().into_owned());
+        mcp_args.push(db_path.to_string_lossy().into_owned());
     }
     mcp_args.extend(args.vestige_args.iter().cloned());
 
@@ -73,7 +73,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
         args.vestige_cli.clone(),
         export_file.to_path_buf(),
         args.export_interval,
-        args.data_dir.clone(),
+        args.db_path.clone(),
     ));
 
     // Spawn the import watcher as a background task.
@@ -83,14 +83,14 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
             args.sync_dir.clone(),
             export_file.to_path_buf(),
             poll_secs,
-            args.data_dir.clone(),
+            args.db_path.clone(),
         ))
     } else {
         tokio::spawn(import::import_watch_loop(
             args.vestige_cli.clone(),
             args.sync_dir.clone(),
             export_file.to_path_buf(),
-            args.data_dir.clone(),
+            args.db_path.clone(),
         ))
     };
 
@@ -124,7 +124,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
     // Final export to capture any memories created during this session
     if args.export_on_exit {
         eprintln!("vestige-sync: running final export");
-        if let Err(e) = export::export_once(&args.vestige_cli, export_file, args.data_dir.as_deref()).await {
+        if let Err(e) = export::export_once(&args.vestige_cli, export_file, args.db_path.as_deref()).await {
             eprintln!("vestige-sync: final export failed: {e}");
         }
     }

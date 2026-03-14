@@ -40,8 +40,8 @@ async fn main() -> ExitCode {
     eprintln!("  sync dir: {}", args.sync_dir.display());
     eprintln!("  export file: {}", export_file.display());
     eprintln!("  export interval: {}s", args.export_interval);
-    if let Some(ref data_dir) = args.data_dir {
-        eprintln!("  data dir: {}", data_dir.display());
+    if let Some(ref db_path) = args.db_path {
+        eprintln!("  db path: {}", db_path.display());
     }
     if let Some(poll) = args.poll_interval {
         eprintln!("  poll interval: {poll}s (filesystem watching disabled)");
@@ -62,7 +62,7 @@ async fn main() -> ExitCode {
             &args.vestige_cli,
             &args.sync_dir,
             &export_file,
-            args.data_dir.as_deref(),
+            args.db_path.as_deref(),
         )
         .await;
     }

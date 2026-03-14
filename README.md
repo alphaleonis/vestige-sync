@@ -40,7 +40,7 @@ Options:
     --poll-interval <SECS>       Poll instead of filesystem watching
     --export-on-exit             Export on shutdown
     --restore-on-start           Import other machines' files on startup
-    --data-dir <PATH>            Forwarded to vestige-mcp and vestige CLI
+    --db-path <PATH>             Path to vestige database file
     --vestige-bin <PATH>         Path to vestige-mcp [default: vestige-mcp]
     --vestige-cli <PATH>         Path to vestige CLI [default: vestige]
 ```

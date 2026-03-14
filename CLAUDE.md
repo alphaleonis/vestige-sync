@@ -39,4 +39,4 @@ cargo test <test_name>   # run a single test
 - **Never write to stdout** from the wrapper itself — it breaks MCP protocol
 - Export files use the pattern `<sync-dir>/<filename>.json`; the wrapper must never import its own export file
 - Temp file writes (`.json.tmp`) then compare-and-rename to avoid triggering unnecessary Syncthing syncs
-- **`--data-dir`** is forwarded to both `vestige-mcp` and the `vestige` CLI — they must use the same database. The CLI currently needs a fork patch to accept `--data-dir`.
+- **`--db-path`** is forwarded to both `vestige-mcp` and the `vestige` CLI (as `--data-dir`) — they must use the same database.
