@@ -63,7 +63,7 @@ Requires [Rust/Cargo](https://www.rust-lang.org/tools/install).
 Install the vestige fork (provides both `vestige-mcp` and `vestige` CLI):
 
 ```bash
-cargo install --git https://github.com/alphaleonis/vestige --branch decaf vestige-mcp
+cargo install --locked --git https://github.com/alphaleonis/vestige --branch decaf vestige-mcp
 ```
 
 Install vestige-sync:
