@@ -1,16 +1,3 @@
 {
-  "mcpServers": {
-    "vestige": {
-      "type": "stdio",
-      "command": "vestige-sync",
-      "args": [
-        "--sync-dir",
-        "/home/decaf/Sync/vestige",
-        "--export-on-exit",
-        "--data-dir",
-        "/home/decaf/.local/share/core/vestige.db"
-      ],
-      "env": {}
-    }
-  }
+  "mcpServers": {}
 }
