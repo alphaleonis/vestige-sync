@@ -55,8 +55,16 @@ Options:
 | `{distro}` | `fedora` | Linux distro ID from `/etc/os-release` |
 | `{user}` | `decaf` | Current username |
 
-## Building
+## Installation
+
+Install the vestige fork (provides both `vestige-mcp` and `vestige` CLI):
 
 ```bash
-cargo build --release
+cargo install --git https://github.com/alphaleonis/vestige --branch decaf vestige-mcp
+```
+
+Install vestige-sync:
+
+```bash
+cargo install --git https://github.com/alphaleonis/vestige-sync
 ```
