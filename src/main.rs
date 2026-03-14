@@ -13,7 +13,8 @@ use template::expand_filename;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    args.resolve_paths();
 
     // Expand filename template
     let filename = match expand_filename(&args.filename) {

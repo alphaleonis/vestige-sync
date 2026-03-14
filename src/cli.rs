@@ -1,6 +1,20 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
+
+/// Expand a leading `~` or `~/` to the user's home directory.
+fn expand_tilde(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if s == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
+    } else if let Some(rest) = s.strip_prefix("~/") {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .join(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
 
 /// Vestige MCP wrapper that syncs memories between machines.
 ///
@@ -54,4 +68,14 @@ pub struct Args {
     /// Arguments forwarded to vestige-mcp (pass after --).
     #[arg(last = true)]
     pub vestige_args: Vec<String>,
+}
+
+impl Args {
+    /// Expand `~` in all path arguments to the user's home directory.
+    pub fn resolve_paths(&mut self) {
+        self.sync_dir = expand_tilde(&self.sync_dir);
+        self.data_dir = self.data_dir.as_deref().map(expand_tilde);
+        self.vestige_bin = expand_tilde(&self.vestige_bin);
+        self.vestige_cli = expand_tilde(&self.vestige_cli);
+    }
 }
