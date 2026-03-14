@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use tokio::io;
 use tokio::process::Command;
 use tokio::signal;
+use tokio::sync::watch;
 
 use crate::cli::Args;
 use crate::export;
@@ -59,6 +60,11 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
     let mut proc_stdin = io::stdin();
     let mut proc_stdout = io::stdout();
 
+    // Shutdown signal for cooperative task cancellation. When set to true,
+    // background tasks finish their current operation and exit cleanly,
+    // avoiding orphaned vestige subprocesses.
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
     // Spawn stdin relay as a background task.
     // When our stdin hits EOF, this completes and drops child_stdin,
     // signaling EOF to the child process.
@@ -74,9 +80,13 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
         export_file.to_path_buf(),
         args.export_interval,
         args.db_path.clone(),
+        shutdown_rx.clone(),
     ));
 
     // Spawn the import watcher as a background task.
+    // NOTE: Export and import run concurrently and both access the same vestige
+    // database via CLI subprocesses. This is safe because vestige uses SQLite in
+    // WAL mode, which supports concurrent readers and a single writer.
     let import_task = if let Some(poll_secs) = args.poll_interval {
         tokio::spawn(import::import_poll_loop(
             args.vestige_cli.clone(),
@@ -84,6 +94,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
             export_file.to_path_buf(),
             poll_secs,
             args.db_path.clone(),
+            shutdown_rx,
         ))
     } else {
         tokio::spawn(import::import_watch_loop(
@@ -91,6 +102,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
             args.sync_dir.clone(),
             export_file.to_path_buf(),
             args.db_path.clone(),
+            shutdown_rx,
         ))
     };
 
@@ -114,14 +126,21 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
         }
     }
 
-    // Cancel background tasks (no longer needed)
+    // Signal background tasks to stop, then wait for them to finish their
+    // current operation. This ensures in-flight vestige subprocesses complete
+    // rather than becoming orphans.
+    let _ = shutdown_tx.send(true);
     stdin_task.abort();
-    export_task.abort();
-    import_task.abort();
+    let _ = tokio::join!(export_task, import_task);
 
     eprintln!("vestige-sync: shutdown reason: {shutdown_reason}");
 
-    // Final export to capture any memories created during this session
+    // Wait for child to fully exit before doing anything else.
+    // This ensures the database is released before the final export.
+    let child_status = child.wait().await;
+
+    // Final export to capture any memories created during this session.
+    // Runs after child.wait() so the database lock is released.
     if args.export_on_exit {
         eprintln!("vestige-sync: running final export");
         if let Err(e) = export::export_once(&args.vestige_cli, export_file, args.db_path.as_deref()).await {
@@ -129,15 +148,15 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
         }
     }
 
-    // Wait for child to exit and propagate its exit code
-    match child.wait().await {
+    // Propagate child's exit code
+    match child_status {
         Ok(status) => {
             eprintln!("vestige-sync: child exited with {status}");
             #[cfg(unix)]
             {
                 use std::os::unix::process::ExitStatusExt;
                 if let Some(sig) = status.signal() {
-                    return ExitCode::from(128 + sig as u8);
+                    return ExitCode::from((128 + sig) as u8);
                 }
             }
             ExitCode::from(status.code().unwrap_or(1) as u8)

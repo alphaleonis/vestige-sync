@@ -693,6 +693,7 @@ dependencies = [
  "dirs",
  "hostname",
  "notify-debouncer-mini",
+ "tempfile",
  "tokio",
  "whoami",
 ]

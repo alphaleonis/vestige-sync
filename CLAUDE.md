@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 vestige-sync is a Rust wrapper binary around [vestige-mcp](https://github.com/samvallad33/vestige) that enables multi-machine memory synchronization via Syncthing (or any file-sync tool). It proxies MCP JSON-RPC stdio to a child `vestige-mcp` process while periodically exporting/importing memories through machine-specific JSON files in a shared sync directory.
 
-See `intent.md` for the full design spec.
-
 ## Build & Test Commands
 
 ```bash
@@ -40,3 +38,4 @@ cargo test <test_name>   # run a single test
 - Export files use the pattern `<sync-dir>/<filename>.json`; the wrapper must never import its own export file
 - Temp file writes (`.json.tmp`) then compare-and-rename to avoid triggering unnecessary Syncthing syncs
 - **`--db-path`** is forwarded to both `vestige-mcp` and the `vestige` CLI (as `--data-dir`) — they must use the same database.
+- **Concurrent database access**: Export and import CLI subprocesses run concurrently with the child `vestige-mcp` process, all sharing the same database. This is safe because vestige uses SQLite in WAL mode. Do not change this assumption without verifying the vestige fork's database backend.

@@ -5,12 +5,20 @@ use clap::Parser;
 /// Expand a leading `~` or `~/` to the user's home directory.
 fn expand_tilde(path: &Path) -> PathBuf {
     let s = path.as_os_str().to_string_lossy();
-    if s == "~" {
-        dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
-    } else if let Some(rest) = s.strip_prefix("~/") {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("~"))
-            .join(rest)
+    if s == "~" || s.starts_with("~/") {
+        match dirs::home_dir() {
+            Some(home) => {
+                if s == "~" {
+                    home
+                } else {
+                    home.join(&s[2..])
+                }
+            }
+            None => {
+                eprintln!("warning: could not determine home directory, '~' not expanded");
+                path.to_path_buf()
+            }
+        }
     } else {
         path.to_path_buf()
     }
@@ -34,13 +42,13 @@ pub struct Args {
     pub filename: String,
 
     /// Export interval in seconds.
-    #[arg(long, default_value_t = 900)]
+    #[arg(long, default_value_t = 900, value_parser = clap::value_parser!(u64).range(1..))]
     pub export_interval: u64,
 
     /// Poll the sync directory for changes at this interval (seconds) instead of
     /// using filesystem notifications. Useful for network mounts or unreliable
     /// filesystem event sources.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     pub poll_interval: Option<u64>,
 
     /// Run a final export before shutting down, to capture any memories

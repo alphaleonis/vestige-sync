@@ -63,10 +63,19 @@ fn get_distro() -> String {
     std::env::consts::OS.to_string()
 }
 
+/// Strip characters that are unsafe in filenames (path separators, etc.).
+/// Keeps alphanumeric, hyphens, underscores, and dots.
+fn sanitize_filename_part(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect()
+}
+
 /// Expand template placeholders in a filename string.
 ///
 /// Supported placeholders: `{hostname}`, `{os}`, `{user}`, `{platform}`, `{distro}`.
 /// Returns an error if unknown `{...}` placeholders are found.
+/// All resolved values are sanitized to prevent path traversal.
 pub fn expand_filename(template: &str) -> Result<String, UnknownPlaceholder> {
     // First pass: check for unknown placeholders
     let mut rest = template;
@@ -85,19 +94,23 @@ pub fn expand_filename(template: &str) -> Result<String, UnknownPlaceholder> {
         }
     }
 
-    // Second pass: expand known placeholders
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "unknown".to_string());
+    // Second pass: expand known placeholders (all values sanitized for safe filenames)
+    let hostname = sanitize_filename_part(
+        &hostname::get()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "unknown".to_string()),
+    );
 
     let result = template
         .replace("{hostname}", &hostname)
         .replace("{os}", std::env::consts::OS)
         .replace("{platform}", get_platform())
-        .replace("{distro}", &get_distro())
+        .replace("{distro}", &sanitize_filename_part(&get_distro()))
         .replace(
             "{user}",
-            &whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+            &sanitize_filename_part(
+                &whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+            ),
         );
 
     Ok(result)
@@ -134,16 +147,13 @@ mod tests {
     #[test]
     fn expands_platform() {
         let result = expand_filename("{platform}").unwrap();
-        // On native Linux: "linux", on WSL: "wsl", on macOS: "macos", etc.
-        assert!(!result.is_empty());
+        assert_eq!(result, get_platform());
     }
 
     #[test]
     fn expands_distro() {
         let result = expand_filename("{distro}").unwrap();
-        // On Linux: distro ID like "fedora", "ubuntu"
-        // On non-Linux: falls back to OS name
-        assert!(!result.is_empty());
+        assert_eq!(result, get_distro());
     }
 
     #[test]

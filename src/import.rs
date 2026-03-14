@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, DebouncedEventKind};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time;
 
 type NotifyResult = Result<Vec<DebouncedEvent>, notify_debouncer_mini::notify::Error>;
@@ -44,9 +44,11 @@ async fn import_file(
     Ok(())
 }
 
-/// List `.json` files in sync_dir, excluding our own export file and `.tmp` files.
-fn list_import_candidates(sync_dir: &Path, own_export_file: &Path) -> Vec<PathBuf> {
-    let entries = match std::fs::read_dir(sync_dir) {
+/// List `.json` files in sync_dir, excluding our own export file.
+/// Uses filename comparison (not full path) to avoid issues with symlinks
+/// or path normalization differences. Only includes regular files (no symlinks).
+async fn list_import_candidates(sync_dir: &Path, own_export_file: &Path) -> Vec<PathBuf> {
+    let mut entries = match tokio::fs::read_dir(sync_dir).await {
         Ok(e) => e,
         Err(e) => {
             eprintln!("vestige-sync: failed to read sync dir: {e}");
@@ -54,15 +56,22 @@ fn list_import_candidates(sync_dir: &Path, own_export_file: &Path) -> Vec<PathBu
         }
     };
 
-    entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "json")
-                && path != own_export_file
-                && !path.to_string_lossy().ends_with(".json.tmp")
-        })
-        .collect()
+    let own_filename = own_export_file.file_name();
+    let mut result = Vec::new();
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "json")
+            && path.file_name() != own_filename
+            && tokio::fs::symlink_metadata(&path)
+                .await
+                .map_or(false, |m| m.is_file())
+        {
+            result.push(path);
+        }
+    }
+
+    result
 }
 
 /// Import all other machines' export files (one-shot, for --restore-on-start).
@@ -72,7 +81,7 @@ pub async fn import_all(
     own_export_file: &Path,
     data_dir: Option<&Path>,
 ) {
-    let candidates = list_import_candidates(sync_dir, own_export_file);
+    let candidates = list_import_candidates(sync_dir, own_export_file).await;
 
     if candidates.is_empty() {
         eprintln!("vestige-sync: restore: no files to import");
@@ -90,37 +99,36 @@ pub async fn import_all(
     }
 }
 
-/// Polling-based import loop. Scans sync_dir every `poll_secs` and imports
-/// files whose mtime has changed since the last scan.
-pub async fn import_poll_loop(
-    vestige_cli: PathBuf,
-    sync_dir: PathBuf,
-    own_export_file: PathBuf,
-    poll_secs: u64,
-    data_dir: Option<PathBuf>,
+/// Run a single poll iteration: scan for candidates and import any with new/changed mtimes.
+async fn poll_once(
+    vestige_cli: &Path,
+    sync_dir: &Path,
+    own_export_file: &Path,
+    data_dir: Option<&Path>,
+    known_mtimes: &mut HashMap<PathBuf, SystemTime>,
 ) {
-    let mut known_mtimes: HashMap<PathBuf, SystemTime> = HashMap::new();
-    let mut interval = time::interval(Duration::from_secs(poll_secs));
+    let candidates = list_import_candidates(sync_dir, own_export_file).await;
 
-    loop {
-        interval.tick().await;
+    // Remove stale entries for files that no longer exist
+    known_mtimes.retain(|path, _| candidates.contains(path));
 
-        let candidates = list_import_candidates(&sync_dir, &own_export_file);
+    for file in candidates {
+        let mtime = match tokio::fs::metadata(&file).await.and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
 
-        for file in candidates {
-            let mtime = match std::fs::metadata(&file).and_then(|m| m.modified()) {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
+        let needs_import = match known_mtimes.get(&file) {
+            Some(prev) => mtime > *prev,
+            None => true, // first time seeing this file
+        };
 
-            let needs_import = match known_mtimes.get(&file) {
-                Some(prev) => mtime > *prev,
-                None => true, // first time seeing this file
-            };
-
-            if needs_import {
-                known_mtimes.insert(file.clone(), mtime);
-                if let Err(e) = import_file(&vestige_cli, &file, data_dir.as_deref()).await {
+        if needs_import {
+            match import_file(vestige_cli, &file, data_dir).await {
+                Ok(()) => {
+                    known_mtimes.insert(file, mtime);
+                }
+                Err(e) => {
                     eprintln!("vestige-sync: poll import failed: {e}");
                 }
             }
@@ -128,13 +136,38 @@ pub async fn import_poll_loop(
     }
 }
 
+/// Polling-based import loop. Scans sync_dir every `poll_secs` and imports
+/// files whose mtime has changed since the last scan.
+/// Stops gracefully when `shutdown` is signaled.
+pub async fn import_poll_loop(
+    vestige_cli: PathBuf,
+    sync_dir: PathBuf,
+    own_export_file: PathBuf,
+    poll_secs: u64,
+    data_dir: Option<PathBuf>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut known_mtimes: HashMap<PathBuf, SystemTime> = HashMap::new();
+    let mut interval = time::interval(Duration::from_secs(poll_secs));
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = shutdown.changed() => break,
+        }
+        poll_once(&vestige_cli, &sync_dir, &own_export_file, data_dir.as_deref(), &mut known_mtimes).await;
+    }
+}
+
 /// Notify-based import watcher. Uses filesystem notifications with debouncing
 /// to detect changes to other machines' export files.
+/// Stops gracefully when `shutdown` is signaled.
 pub async fn import_watch_loop(
     vestige_cli: PathBuf,
     sync_dir: PathBuf,
     own_export_file: PathBuf,
     data_dir: Option<PathBuf>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let (tx, mut rx) = mpsc::channel::<NotifyResult>(64);
 
@@ -146,9 +179,10 @@ pub async fn import_watch_loop(
         Ok(d) => d,
         Err(e) => {
             eprintln!("vestige-sync: failed to create file watcher: {e}");
-            eprintln!("vestige-sync: falling back to no import watching");
-            // Park forever so the task doesn't exit
-            std::future::pending::<()>().await;
+            eprintln!("vestige-sync: WARNING: import watching is permanently disabled for this session");
+            // Wait for shutdown signal so the task stays alive and responds
+            // to cooperative shutdown from proxy.rs.
+            let _ = shutdown.changed().await;
             return;
         }
     };
@@ -158,31 +192,37 @@ pub async fn import_watch_loop(
         .watch(&sync_dir, notify_debouncer_mini::notify::RecursiveMode::NonRecursive)
     {
         eprintln!("vestige-sync: failed to watch sync dir: {e}");
-        eprintln!("vestige-sync: falling back to no import watching");
-        std::future::pending::<()>().await;
+        eprintln!("vestige-sync: WARNING: import watching is permanently disabled for this session");
+        drop(debouncer); // Release OS watcher thread
+        let _ = shutdown.changed().await;
         return;
     }
 
     eprintln!("vestige-sync: watching {} for changes", sync_dir.display());
 
-    while let Some(events) = rx.recv().await {
-        let events = match events {
-            Ok(events) => events,
-            Err(e) => {
-                eprintln!("vestige-sync: watch error: {e}");
-                continue;
-            }
+    loop {
+        let events = tokio::select! {
+            event = rx.recv() => match event {
+                Some(Ok(events)) => events,
+                Some(Err(e)) => {
+                    eprintln!("vestige-sync: watch error: {e}");
+                    continue;
+                }
+                None => break, // channel closed
+            },
+            _ = shutdown.changed() => break,
         };
 
-        // Collect unique files that were modified
+        // Collect unique regular files that were modified (no symlinks)
+        let own_filename = own_export_file.file_name();
         let mut to_import: Vec<PathBuf> = events
             .into_iter()
             .filter(|e| e.kind == DebouncedEventKind::Any)
             .map(|e| e.path)
             .filter(|path| {
                 path.extension().is_some_and(|ext| ext == "json")
-                    && *path != own_export_file
-                    && !path.to_string_lossy().ends_with(".json.tmp")
+                    && path.file_name() != own_filename
+                    && path.symlink_metadata().map_or(false, |m| m.is_file())
             })
             .collect();
 
@@ -194,5 +234,31 @@ pub async fn import_watch_loop(
                 eprintln!("vestige-sync: watch import failed: {e}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_import_does_not_record_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let own_export = dir.path().join("self.json");
+        let other_file = dir.path().join("other.json");
+        std::fs::write(&other_file, "{}").unwrap();
+
+        // Use a nonexistent binary so import_file will fail
+        let fake_cli = PathBuf::from("/nonexistent/vestige-cli-does-not-exist");
+        let mut known_mtimes = HashMap::new();
+
+        poll_once(&fake_cli, dir.path(), &own_export, None, &mut known_mtimes).await;
+
+        // After a failed import, the mtime should NOT be recorded,
+        // so the file will be retried on the next poll
+        assert!(
+            known_mtimes.is_empty(),
+            "known_mtimes should be empty after failed import, but contains: {known_mtimes:?}",
+        );
     }
 }

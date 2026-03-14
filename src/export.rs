@@ -2,21 +2,28 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio::process::Command;
+use tokio::sync::watch;
 use tokio::time;
 
 /// Run the export loop: periodically export memories to the sync directory.
 ///
 /// The first export fires immediately, then repeats every `interval_secs`.
+/// Stops gracefully when `shutdown` is signaled, allowing any in-flight
+/// export subprocess to complete.
 pub async fn export_loop(
     vestige_cli: PathBuf,
     export_file: PathBuf,
     interval_secs: u64,
     data_dir: Option<PathBuf>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let mut interval = time::interval(Duration::from_secs(interval_secs));
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = shutdown.changed() => break,
+        }
 
         if let Err(e) = export_once(&vestige_cli, &export_file, data_dir.as_deref()).await {
             eprintln!("vestige-sync: export failed: {e}");
@@ -62,11 +69,25 @@ pub async fn export_once(
         return Err("vestige export did not create output file".into());
     }
 
-    // Compare with existing export file
-    if export_file.exists() {
-        let existing = tokio::fs::read(&export_file).await?;
-        let new = tokio::fs::read(&tmp_file).await?;
+    // Restrict permissions — memory data may contain sensitive information
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&tmp_file, std::fs::Permissions::from_mode(0o600)).await?;
+    }
 
+    // Compare with existing export file. Byte-level comparison works because our
+    // vestige fork (alphaleonis/vestige@decaf) guarantees stable export ordering
+    // (created_at ASC, id ASC). Without stable ordering, identical data would
+    // produce different bytes, causing unnecessary Syncthing syncs on every cycle.
+    let existing = match tokio::fs::read(&export_file).await {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+
+    if let Some(existing) = existing {
+        let new = tokio::fs::read(&tmp_file).await?;
         if existing == new {
             // Identical — delete tmp, preserve original mtime
             tokio::fs::remove_file(&tmp_file).await?;
