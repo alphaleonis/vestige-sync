@@ -15,7 +15,7 @@ pub struct Args {
 
     /// Output file stem (template). The .json extension is appended automatically.
     ///
-    /// Supports placeholders: {hostname}, {os}, {user}.
+    /// Supports placeholders: {hostname}, {os}, {platform}, {distro}, {user}.
     #[arg(long, default_value = "{hostname}")]
     pub filename: String,
 

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-const KNOWN_PLACEHOLDERS: &[&str] = &["hostname", "os", "user"];
+const KNOWN_PLACEHOLDERS: &[&str] = &["hostname", "os", "user", "platform", "distro"];
 
 #[derive(Debug)]
 pub struct UnknownPlaceholder {
@@ -25,9 +25,47 @@ impl fmt::Display for UnknownPlaceholder {
 
 impl Error for UnknownPlaceholder {}
 
+/// Detect if running under WSL by checking /proc/version for "microsoft".
+fn is_wsl() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/version")
+            .map(|v| v.to_lowercase().contains("microsoft"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Get the platform: like `os` but returns "wsl" instead of "linux" when under WSL.
+fn get_platform() -> &'static str {
+    match std::env::consts::OS {
+        "linux" if is_wsl() => "wsl",
+        other => other,
+    }
+}
+
+/// Get the distro ID from /etc/os-release (e.g. "fedora", "ubuntu", "arch").
+/// Falls back to the OS name on non-Linux or if parsing fails.
+fn get_distro() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(contents) = std::fs::read_to_string("/etc/os-release") {
+            for line in contents.lines() {
+                if let Some(id) = line.strip_prefix("ID=") {
+                    return id.trim_matches('"').to_string();
+                }
+            }
+        }
+    }
+    std::env::consts::OS.to_string()
+}
+
 /// Expand template placeholders in a filename string.
 ///
-/// Supported placeholders: `{hostname}`, `{os}`, `{user}`.
+/// Supported placeholders: `{hostname}`, `{os}`, `{user}`, `{platform}`, `{distro}`.
 /// Returns an error if unknown `{...}` placeholders are found.
 pub fn expand_filename(template: &str) -> Result<String, UnknownPlaceholder> {
     // First pass: check for unknown placeholders
@@ -55,6 +93,8 @@ pub fn expand_filename(template: &str) -> Result<String, UnknownPlaceholder> {
     let result = template
         .replace("{hostname}", &hostname)
         .replace("{os}", std::env::consts::OS)
+        .replace("{platform}", get_platform())
+        .replace("{distro}", &get_distro())
         .replace(
             "{user}",
             &whoami::username().unwrap_or_else(|_| "unknown".to_string()),
@@ -89,6 +129,21 @@ mod tests {
         let result = expand_filename("{hostname}").unwrap();
         let expected = hostname::get().unwrap().to_string_lossy().into_owned();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn expands_platform() {
+        let result = expand_filename("{platform}").unwrap();
+        // On native Linux: "linux", on WSL: "wsl", on macOS: "macos", etc.
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn expands_distro() {
+        let result = expand_filename("{distro}").unwrap();
+        // On Linux: distro ID like "fedora", "ubuntu"
+        // On non-Linux: falls back to OS name
+        assert!(!result.is_empty());
     }
 
     #[test]
