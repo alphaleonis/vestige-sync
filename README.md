@@ -57,6 +57,8 @@ Options:
 
 ## Installation
 
+Requires [Rust/Cargo](https://www.rust-lang.org/tools/install).
+
 Install the vestige fork (provides both `vestige-mcp` and `vestige` CLI):
 
 ```bash
