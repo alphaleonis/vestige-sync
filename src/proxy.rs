@@ -80,6 +80,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
         export_file.to_path_buf(),
         args.export_interval,
         args.db_path.clone(),
+        args.format.clone(),
         shutdown_rx.clone(),
     ));
 
@@ -143,7 +144,7 @@ pub async fn run(args: &Args, export_file: &Path) -> ExitCode {
     // Runs after child.wait() so the database lock is released.
     if args.export_on_exit {
         eprintln!("vestige-sync: running final export");
-        if let Err(e) = export::export_once(&args.vestige_cli, export_file, args.db_path.as_deref()).await {
+        if let Err(e) = export::export_once(&args.vestige_cli, export_file, args.db_path.as_deref(), &args.format).await {
             eprintln!("vestige-sync: final export failed: {e}");
         }
     }

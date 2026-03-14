@@ -24,7 +24,7 @@ claude mcp add vestige -- vestige-sync --sync-dir ~/Sync/vestige --export-on-exi
 
 This starts the wrapper, which:
 - Passes MCP stdio through to `vestige-mcp`
-- Periodically exports to `~/Sync/vestige/<hostname>.json`
+- Periodically exports to `~/Sync/vestige/<hostname>.jsonl`
 - Watches for other machines' export files and imports them
 - Runs a final export on exit to capture late-session memories
 
@@ -36,6 +36,7 @@ vestige-sync [OPTIONS] --sync-dir <PATH> [-- VESTIGE_ARGS...]
 Options:
     --sync-dir <PATH>            Sync directory for export/import files (required)
     --filename <TEMPLATE>        Output file stem [default: {hostname}]
+    --format <FORMAT>            Export format: json, jsonl, json.gz, jsonl.gz [default: jsonl]
     --export-interval <SECS>     Export interval [default: 900]
     --poll-interval <SECS>       Poll instead of filesystem watching
     --export-on-exit             Export on shutdown

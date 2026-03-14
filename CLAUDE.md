@@ -35,7 +35,8 @@ cargo test <test_name>   # run a single test
 ## Critical Constraints
 
 - **Never write to stdout** from the wrapper itself — it breaks MCP protocol
-- Export files use the pattern `<sync-dir>/<filename>.json`; the wrapper must never import its own export file
-- Temp file writes (`.json.tmp`) then compare-and-rename to avoid triggering unnecessary Syncthing syncs
+- Export files use the pattern `<sync-dir>/<filename>.<format-ext>` (extension depends on `--format`, default `jsonl`); the wrapper must never import its own export file. Stale export files from a previous format are automatically cleaned up after each successful export.
+- Temp file writes use a dotfile prefix (e.g., `.hostname.jsonl`) then compare-and-rename to avoid triggering unnecessary Syncthing syncs. Import filtering rejects dotfiles as defense-in-depth.
+- **Import accepts all formats** (`json`, `jsonl`, `json.gz`, `jsonl.gz`) regardless of the configured export format, since other machines in the sync group may use different formats. The vestige CLI auto-detects format on import.
 - **`--db-path`** is forwarded to both `vestige-mcp` and the `vestige` CLI (as `--data-dir`) — they must use the same database.
 - **Concurrent database access**: Export and import CLI subprocesses run concurrently with the child `vestige-mcp` process, all sharing the same database. This is safe because vestige uses SQLite in WAL mode. Do not change this assumption without verifying the vestige fork's database backend.

@@ -34,11 +34,12 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let export_file = args.sync_dir.join(format!("{filename}.json"));
+    let export_file = args.format.export_path(&args.sync_dir, &filename);
 
     eprintln!("vestige-sync starting");
     eprintln!("  sync dir: {}", args.sync_dir.display());
     eprintln!("  export file: {}", export_file.display());
+    eprintln!("  format: {}", args.format.extension());
     eprintln!("  export interval: {}s", args.export_interval);
     if let Some(ref db_path) = args.db_path {
         eprintln!("  db path: {}", db_path.display());
